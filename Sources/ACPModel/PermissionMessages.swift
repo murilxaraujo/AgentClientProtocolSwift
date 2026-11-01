@@ -111,6 +111,8 @@ public enum RequestPermissionOutcome: Codable, Sendable, Hashable {
 /// Request for user permission to execute a tool call.
 ///
 /// Sent when the agent needs authorization before performing a sensitive operation.
+/// Supports both v1 wire format (bare `toolCall`) and v2 wire format (`subject.toolCall`
+/// with top-level `title`/`description`).
 ///
 /// See protocol docs: [Requesting Permission](https://agentclientprotocol.com/protocol/tool-calls#requesting-permission)
 public struct RequestPermissionRequest: AcpRequest, AcpWithSessionId, Codable, Sendable, Hashable {
@@ -123,6 +125,12 @@ public struct RequestPermissionRequest: AcpRequest, AcpWithSessionId, Codable, S
     /// The permission options to present to the user
     public let options: [PermissionOption]
 
+    /// Human-readable title for the permission prompt (v2 format only)
+    public let title: String?
+
+    /// Optional description of the action requiring permission (v2 format only)
+    public let description: String?
+
     /// Optional metadata
     public let _meta: MetaField? // swiftlint:disable:this identifier_name
 
@@ -132,24 +140,66 @@ public struct RequestPermissionRequest: AcpRequest, AcpWithSessionId, Codable, S
     ///   - sessionId: The session ID
     ///   - toolCall: The tool call needing permission
     ///   - options: Available permission options
+    ///   - title: Human-readable title (v2)
+    ///   - description: Optional description (v2)
     ///   - meta: Optional metadata
     public init(
         sessionId: SessionId,
         toolCall: ToolCallUpdateData,
         options: [PermissionOption],
+        title: String? = nil,
+        description: String? = nil,
         meta: MetaField? = nil
     ) {
         self.sessionId = sessionId
         self.toolCall = toolCall
         self.options = options
+        self.title = title
+        self.description = description
         self._meta = meta
+    }
+
+    // v2 subject wrapper: { "type": "tool_call", "toolCall": { ... } }
+    private struct SubjectData: Decodable {
+        let toolCall: ToolCallUpdateData
+        enum CodingKeys: String, CodingKey {
+            case toolCall
+        }
     }
 
     private enum CodingKeys: String, CodingKey {
         case sessionId = "sessionId"
         case toolCall = "toolCall"
+        case subject = "subject"
+        case title = "title"
+        case description = "description"
         case options = "options"
         case _meta = "_meta" // swiftlint:disable:this identifier_name
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = try container.decode(SessionId.self, forKey: .sessionId)
+        // v2: toolCall is nested inside subject; v1: toolCall is at the top level
+        if let subject = try container.decodeIfPresent(SubjectData.self, forKey: .subject) {
+            toolCall = subject.toolCall
+        } else {
+            toolCall = try container.decode(ToolCallUpdateData.self, forKey: .toolCall)
+        }
+        title = try container.decodeIfPresent(String.self, forKey: .title)
+        description = try container.decodeIfPresent(String.self, forKey: .description)
+        options = try container.decode([PermissionOption].self, forKey: .options)
+        _meta = try container.decodeIfPresent(MetaField.self, forKey: ._meta)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(sessionId, forKey: .sessionId)
+        try container.encode(toolCall, forKey: .toolCall)
+        try container.encodeIfPresent(title, forKey: .title)
+        try container.encodeIfPresent(description, forKey: .description)
+        try container.encode(options, forKey: .options)
+        try container.encodeIfPresent(_meta, forKey: ._meta)
     }
 }
 

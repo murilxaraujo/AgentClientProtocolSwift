@@ -191,6 +191,63 @@ internal final class PermissionMessagesTests: XCTestCase {
         XCTAssertEqual(request.sessionId.value, "session-1")
         XCTAssertEqual(request.toolCall.title, "exec")
         XCTAssertEqual(request.options.count, 1)
+        XCTAssertNil(request.title)
+    }
+
+    /// v2 wire format: toolCall nested under subject, with top-level title/description.
+    func testRequestPermissionRequestDecodesV2SubjectFormat() throws {
+        let json = """
+        {
+            "sessionId": "session-2",
+            "title": "Run shell command",
+            "description": "tailscale status",
+            "subject": {
+                "type": "tool_call",
+                "toolCall": {
+                    "toolCallId": "tc-2",
+                    "kind": "execute"
+                }
+            },
+            "options": [
+                {"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+                {"optionId": "deny", "name": "Deny", "kind": "reject_once"}
+            ]
+        }
+        """
+
+        let request = try JSONDecoder().decode(RequestPermissionRequest.self, from: Data(json.utf8))
+
+        XCTAssertEqual(request.sessionId.value, "session-2")
+        XCTAssertEqual(request.toolCall.toolCallId.value, "tc-2")
+        XCTAssertEqual(request.toolCall.kind, .execute)
+        XCTAssertEqual(request.title, "Run shell command")
+        XCTAssertEqual(request.description, "tailscale status")
+        XCTAssertEqual(request.options.count, 2)
+    }
+
+    /// v1 fallback still works when subject key is absent.
+    func testRequestPermissionRequestDecodesV1FallbackFormat() throws {
+        let json = """
+        {
+            "sessionId": "session-3",
+            "toolCall": {
+                "toolCallId": "tc-3",
+                "title": "write file",
+                "kind": "edit"
+            },
+            "options": [
+                {"optionId": "opt-1", "name": "Allow Once", "kind": "allow_once"}
+            ]
+        }
+        """
+
+        let request = try JSONDecoder().decode(RequestPermissionRequest.self, from: Data(json.utf8))
+
+        XCTAssertEqual(request.sessionId.value, "session-3")
+        XCTAssertEqual(request.toolCall.toolCallId.value, "tc-3")
+        XCTAssertEqual(request.toolCall.title, "write file")
+        XCTAssertNil(request.title)
+        XCTAssertEqual(request.options.count, 1)
     }
 
     // MARK: - RequestPermissionResponse Tests
